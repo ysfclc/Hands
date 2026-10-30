@@ -1,180 +1,29 @@
-name: Build HANDS APK - Real Signed APK
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-
-jobs:
-  build-apk:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Extract project zip
+      - name: Setup Android SDK - FIXED
         run: |
-          ZIP_FILE=""
-          if [ -f hands_project.zip ]; then ZIP_FILE="hands_project.zip"
-          elif [ -f hands_secure_original.zip ]; then ZIP_FILE="hands_secure_original.zip"
-          fi
-          if [ -n "$ZIP_FILE" ]; then
-            mkdir -p /tmp/extract
-            unzip -o "$ZIP_FILE" -d /tmp/extract
-            PROJECT_ROOT="/tmp/extract"
-            if [ -d /tmp/extract/hands_final ]; then PROJECT_ROOT="/tmp/extract/hands_final"; fi
-            rsync -av --exclude='.github' "$PROJECT_ROOT"/ ./ 2>/dev/null || cp -r "$PROJECT_ROOT"/* ./ 2>/dev/null || true
-          fi
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Setup Android SDK - FIXED (no android-actions)
-        run: |
-          # Install Android SDK command-line tools
+          export ANDROID_SDK_ROOT=$HOME/android-sdk
+          export ANDROID_HOME=$HOME/android-sdk
           mkdir -p $HOME/android-sdk/cmdline-tools
           cd $HOME/android-sdk/cmdline-tools
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline.zip
-          unzip -q cmdline.zip
-          mv cmdline latest
-          export ANDROID_SDK_ROOT=$HOME/android-sdk
-          export ANDROID_HOME=$HOME/android-sdk
-          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools
+          unzip -q -o cmdline.zip
+          ls -la
+          # FIX: zip contains cmdline-tools folder, not cmdline
+          if [ -d cmdline-tools ]; then
+            rm -rf latest || true
+            mv cmdline-tools latest
+          elif [ -d cmdline ]; then
+            rm -rf latest || true
+            mv cmdline latest
+          else
+            mkdir -p latest
+            mv bin lib NOTICE.txt source.properties latest/ 2>/dev/null || true
+          fi
+          ls -la latest/bin/ | head -10
+          
           echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
           echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
           echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+          
           yes | sdkmanager --licenses || true
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-          sdkmanager --list | tail -20
-
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-
-      - name: Install Python deps
-        run: pip install -r requirements.txt 2>&1 | tail -5 || pip install fastapi uvicorn || true
-
-      - name: Create Real Android Project with Gradle Wrapper
-        run: |
-          mkdir -p android/app/src/main/java/com/hands/os
-          mkdir -p android/app/src/main/assets/www
-          
-          # settings.gradle
-          cat > android/settings.gradle << 'GRADLE'
-          include ':app'
-          GRADLE
-          
-          # build.gradle (project)
-          cat > android/build.gradle << 'GRADLE'
-          buildscript {
-            repositories { google(); mavenCentral() }
-            dependencies { classpath 'com.android.tools.build:gradle:8.1.0' }
-          }
-          allprojects { repositories { google(); mavenCentral() } }
-          GRADLE
-          
-          # app/build.gradle - real config that builds signed APK
-          cat > android/app/build.gradle << 'GRADLE'
-          plugins { id 'com.android.application' }
-          android {
-              compileSdk 34
-              defaultConfig {
-                  applicationId "com.hands.os"
-                  minSdk 24
-                  targetSdk 34
-                  versionCode 7
-                  versionName "2.0-light-speed"
-              }
-              signingConfigs {
-                  debug {
-                      storeFile file('debug.keystore')
-                      storePassword 'android'
-                      keyAlias 'androiddebugkey'
-                      keyPassword 'android'
-                  }
-              }
-              buildTypes {
-                  debug { signingConfig signingConfigs.debug; minifyEnabled false }
-                  release { minifyEnabled true; proguardFiles getDefaultProguardFile('proguard-android.txt') }
-              }
-          }
-          dependencies { implementation 'androidx.appcompat:appcompat:1.6.1' }
-          GRADLE
-          
-          # AndroidManifest.xml - text is ok, Gradle will convert to binary
-          cat > android/app/src/main/AndroidManifest.xml << 'MAN'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.hands.os" android:versionCode="7" android:versionName="2.0-light-speed">
-            <uses-permission android:name="android.permission.INTERNET"/>
-            <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
-            <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"/>
-            <uses-permission android:name="android.permission.RECORD_AUDIO"/>
-            <application android:allowBackup="true" android:label="HANDS OS v2" android:theme="@android:style/Theme.NoTitleBar">
-              <activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
-            </application>
-          </manifest>
-          MAN
-          
-          cat > android/app/src/main/java/com/hands/os/MainActivity.java << 'JAVA'
-          package com.hands.os;
-          import android.app.Activity; import android.os.Bundle; import android.webkit.WebView;
-          public class MainActivity extends Activity {
-              @Override protected void onCreate(Bundle s){
-                  super.onCreate(s);
-                  WebView w=new WebView(this);
-                  w.getSettings().setJavaScriptEnabled(true);
-                  w.getSettings().setDomStorageEnabled(true);
-                  w.loadUrl("file:///android_asset/www/index.html");
-                  setContentView(w);
-              }
-          }
-          JAVA
-          
-          cat > android/app/src/main/assets/www/index.html << 'HTML'
-          <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>HANDS OS v2</title><style>body{background:#000;color:#0f8;font-family:monospace;padding:20px}</style></head><body><h2>⚡ HANDS OS v2 Light Speed</h2><p>RAM-aware quantized, app mapper, floating bubble, voice, chat history</p><p>Built via Gradle - Real Signed APK</p></body></html>
-          HTML
-          
-          # Copy project files to assets
-          cp -r core manifests workflows README.md requirements.txt android/app/src/main/assets/www/ 2>/dev/null || true
-          
-          # Create debug keystore (Gradle will create one automatically, but we create to be safe)
-          keytool -genkey -v -keystore android/app/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || echo "keytool failed, Gradle will create keystore"
-          
-          # Gradle wrapper - create minimal wrapper
-          cat > android/gradlew << 'WRAP'
-          #!/bin/bash
-          GRADLE_VERSION=8.4
-          if [ ! -d "$HOME/.gradle/wrapper/dists/gradle-$GRADLE_VERSION-bin" ]; then
-            mkdir -p $HOME/.gradle/wrapper/dists/gradle-$GRADLE_VERSION-bin
-            cd /tmp && wget -q https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip
-            unzip -q gradle-$GRADLE_VERSION-bin.zip
-            mv gradle-$GRADLE_VERSION $HOME/.gradle/wrapper/dists/gradle-$GRADLE_VERSION-bin/
-          fi
-          exec $HOME/.gradle/wrapper/dists/gradle-$GRADLE_VERSION-bin/gradle-$GRADLE_VERSION/bin/gradle "$@"
-          WRAP
-          chmod +x android/gradlew
-          
-          echo "Android project created:"
-          ls -la android/
-          ls -la android/app/src/main/
-
-      - name: Build Real Signed APK via Gradle
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
-          echo "=== APKs ==="
-          find app/build/outputs -name "*.apk" -type f | xargs ls -lh
-          cp app/build/outputs/apk/debug/app-debug.apk ../hands-debug.apk 2>/dev/null || cp app/build/outputs/apk/debug/*.apk ../hands-debug.apk || true
-          cd ..
-          ls -lh hands-debug.apk || true
-          file hands-debug.apk || true
-
-      - name: Upload APK Artifact - Real Signed
-        uses: actions/upload-artifact@v4
-        with:
-          name: hands-apk-debug
-          path: |
-            android/app/build/outputs/apk/debug/*.apk
-            hands-debug.apk
-          if-no-files-found: error
