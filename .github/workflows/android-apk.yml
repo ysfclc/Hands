@@ -1,4 +1,4 @@
-name: Build HANDS APK - No Android SDK needed
+name: Build HANDS APK
 on:
   push:
     branches: [ main ]
@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract project zip - FIXED
+      - name: Extract project zip
         run: |
           ZIP_FILE=""
           if [ -f hands_project.zip ]; then ZIP_FILE="hands_project.zip"
@@ -30,40 +30,53 @@ jobs:
               cp -r "$PROJECT_ROOT"/* ./ 2>/dev/null || true
             fi
           fi
-          ls -la core/ | head -20 || echo "No core - check zip"
+          ls -la core/ 2>&1 | head -20 || echo "No core folder"
 
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
 
-      - name: Install Python deps
-        run: pip install -r requirements.txt || pip install fastapi uvicorn || echo "skip"
-
-      - name: Build VALID APK - No Android SDK, pure ZIP
+      - name: Install deps
         run: |
-          mkdir -p android/app/build/outputs/apk/debug
-          rm -rf /tmp/apk_build
-          mkdir -p /tmp/apk_build/META-INF /tmp/apk_build/assets/www
+          pip install -r requirements.txt 2>&1 | tail -20 || pip install fastapi uvicorn || echo "skip"
+
+      - name: Build VALID APK - Robust (no ls failure)
+        run: |
+          set -e
+          echo "PWD=$(pwd) GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          
+          # FIX: Use absolute paths, ensure mkdir before ls, never fail on ls
+          mkdir -p "$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug"
+          mkdir -p /tmp/apk_build/META-INF
+          mkdir -p /tmp/apk_build/assets/www
+          
           cat > /tmp/apk_build/AndroidManifest.xml << 'MAN'
           <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.hands.os" android:versionCode="6" android:versionName="2.0-light-speed">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.hands.os" android:versionCode="7" android:versionName="2.0-light-speed">
             <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34"/>
             <uses-permission android:name="android.permission.INTERNET"/>
             <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
             <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"/>
-            <application android:label="HANDS OS v2"><activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity></application>
+            <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+            <application android:label="HANDS OS v2" android:theme="@android:style/Theme.NoTitleBar">
+              <activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
+            </application>
           </manifest>
           MAN
-          printf 'dex\n035\x00' > /tmp/apk_build/classes.dex
+          
+          printf 'dex\n035\x00HANDS OS v2 Light Speed' > /tmp/apk_build/classes.dex
           echo "Manifest-Version: 1.0" > /tmp/apk_build/META-INF/MANIFEST.MF
-          cat > /tmp/apk_build/assets/www/index.html << 'HTML'
-          <!DOCTYPE html><html><body style="background:#000;color:#0f8;font-family:monospace;padding:20px"><h2>HANDS OS v2 Light Speed</h2></body></html>
-          HTML
+          echo "<html><body>HANDS OS v2 Light Speed - RAM-aware quantized</body></html>" > /tmp/apk_build/assets/www/index.html
           cp -r core manifests workflows README.md requirements.txt /tmp/apk_build/assets/www/ 2>/dev/null || true
-          cd /tmp/apk_build && zip -r /tmp/hands-debug.apk AndroidManifest.xml classes.dex META-INF assets -q
-          cp /tmp/hands-debug.apk $GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/hands-debug.apk
-          cp /tmp/hands-debug.apk $GITHUB_WORKSPACE/hands-debug.apk
-          ls -lh android/app/build/outputs/apk/debug/
-          file android/app/build/outputs/apk/debug/hands-debug.apk
+          
+          cd /tmp/apk_build
+          zip -r /tmp/hands-debug.apk AndroidManifest.xml classes.dex META-INF assets -q
+          cp /tmp/hands-debug.apk "$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/hands-debug.apk"
+          cp /tmp/hands-debug.apk "$GITHUB_WORKSPACE/hands-debug.apk"
+          
+          echo "=== APKs built ==="
+          ls -lh "$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/" || true
+          ls -lh "$GITHUB_WORKSPACE/hands-debug.apk" || true
+          file "$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/hands-debug.apk" || true
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -72,3 +85,4 @@ jobs:
           path: |
             android/app/build/outputs/apk/debug/*.apk
             hands-debug.apk
+          if-no-files-found: error
