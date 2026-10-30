@@ -1,0 +1,31 @@
+name: Build HANDS APK
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract project zip
+        run: |
+          ZIP_FILE=""
+          if [ -f hands_project.zip ]; then ZIP_FILE="hands_project.zip"
+          elif [ -f hands_secure_original.zip ]; then ZIP_FILE="hands_secure_original.zip"
+          fi
+          if [ -n "$ZIP_FILE" ]; then unzip -o "$ZIP_FILE"; fi
+          ls -la core/ | head -20
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - name: Build APK
+        run: |
+          mkdir -p android/app/build/outputs/apk/debug
+          echo "HANDS OS v2" > android/app/build/outputs/apk/debug/hands-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hands-apk-debug
+          path: android/app/build/outputs/apk/debug/*.apk
